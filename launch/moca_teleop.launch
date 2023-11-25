@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<launch>
+<arg name="use_imu" default="false"/>
+
+<include file="$(find hrii_moca_interface)/launch/moca_launcher.launch">
+    <arg name="launch_rviz" default="false"/>
+</include>
+
+<node 
+    name="spawn_model1" 
+    pkg="gazebo_ros" 
+    type="spawn_model" 
+    args="
+    -file $(find human_factor)/models/blue_sphere/model.sdf
+    -sdf
+    -x -0.106 
+    -y -0.175 
+    -z 0.826
+    -model target "
+    respawn="False" 
+    output="screen">
+</node>
+
+<node 
+    name="spawn_model2" 
+    pkg="gazebo_ros" 
+    type="spawn_model" 
+    args="
+    -file $(find human_factor)/models/red_sphere/model.sdf
+    -sdf
+    -x -0.06
+    -y 0.173
+    -z 0.826
+    -model obstacle "
+    respawn="False" 
+    output="screen">
+</node>
+
+<group if="$(arg use_imu)">
+    
+    <node name="xsenskinematics" pkg="human_factor" type="xsenskinematics.py">
+    </node>
+
+    <node name="hand_controller" pkg="human_factor" type="hand_controller" output="screen">
+    </node>
+
+</group>    
+
+
+<group unless="$(arg use_imu)">
+
+<node name = "obj_teleop" pkg="gen_objects" type="obj_teleop" output="screen"/>
+<node name = "teleopkey" pkg="teleop_twist_keyboard_cpp" type="teleopkey" output="screen"/>
+
+</group>    
+
+</launch>

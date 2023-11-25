@@ -1,0 +1,120 @@
+<?xml version="1.0"?>
+<launch>
+ 
+    <!-- General parameters -->
+    <arg name="interface_type" default="$(optenv INTERFACE_TYPE SIMULATION)"/>
+    <arg name="use_imu" default="false"/>
+    <arg name="hands_only" default="true"/>
+    
+    <arg name="launch_rviz" default="false"/>
+
+    <!-- General simulation parameters -->
+    <arg name="launch_gazebo_gui" default="true"/>
+
+    <!-- General robot parameters -->
+    <arg name="robot_model" default="moca"/>
+    <arg name="arm_model" default="franka"/>
+    <arg name="arm_id" default="franka"/>
+    <arg name="robot_id" default="$(optenv ROBOT_ID robot)"/>
+    <arg name="robot_brand" default="$(arg robot_model)"/>
+    <arg name="arm_transmission_type" default="effort"/>
+    <arg name="launch_gripper" default="no_gripper"/>
+    <arg name="robot_interface_config_file" default="$(eval find('hrii_' + arg('robot_brand') + '_interface') + '/config/' + arg('robot_model') + '_no_gripper.yaml')"/>
+    <!-- <arg name="launch_interactive_marker" default="true"/> -->
+
+    <!-- Robot hardware parameters -->
+    <arg name="robot_arm_ip" default="$(optenv ROBOT_ARM_IP 192.168.1.11)"/>
+    <!-- <arg name="robot_arm_ip" default="$(optenv ROBOT_ARM_IP 192.168.0.101)"/> -->
+    <!-- <arg name="robot_arm_ip" default="172.16.0.2"/> -->
+
+                                         
+    <arg name="is_floating_base_robot" default="true"/>
+
+    <!-- Admittance controller parameters -->
+    <arg name="inertia_settings" default="medium"/>
+    <arg name="inertial_yaw_scaling" default="0.33"/>
+    <arg name="damping_scale_factor" default="10.0"/>
+
+    <!-- Load robot generic interface-->
+    <include file="$(find hrii_floating_base_robot_controllers)/launch/generic_robot_launcher.xml" pass_all_args="true"/>
+
+    <group ns="$(arg robot_id)">
+        <node if="$(arg hands_only)" name="dghc" pkg="dghc" type="dghc" output = "screen"/>
+        <node unless="$(arg hands_only)" name="dghc_fullbody" pkg="dghc" type="dghc_fullbody" output = "screen"/>
+        <!-- Load admittance controller -->
+        <node pkg="hrii_robotnik_control" type="admittance_controller_node" name="admittance_controller_node" required="true">
+            <param name="inertia_settings" value="$(arg inertia_settings)"/>
+            <param name="inertial_yaw_scaling" value="$(arg inertial_yaw_scaling)"/>
+            <param name="damping_scale_factor" value="$(arg damping_scale_factor)"/>
+            <remap from="admittance_controller_node/cmd_vel" to="/$(arg robot_id)/robotnik_base_control/cmd_vel"/>
+            <remap from="admittance_controller_node/mass_matrix" to="/mass_matrix"/>
+            <remap from="admittance_controller_node/vir_torque" to="/vir_torque"/>
+        </node>
+    </group>
+
+
+
+    <group if="$(arg hands_only)">
+        <group if="$(eval interface_type == 'SIMULATION')">
+       
+            <node 
+                name="spawn_model1" 
+                pkg="gazebo_ros" 
+                type="spawn_model" 
+                args="
+                -file $(find hands_only)/models/blue_sphere/model.sdf
+                -sdf
+                -x -0.106 
+                -y -0.175 
+                -z 0.826
+                -model target "
+                respawn="False" 
+                output="screen">
+            </node>
+
+            <node 
+                name="spawn_model2" 
+                pkg="gazebo_ros" 
+                type="spawn_model" 
+                args="
+                -file $(find hands_only)/models/red_sphere/model.sdf
+                -sdf
+                -x 1
+                -y 1
+                -z 3
+                -model obstacle "
+                respawn="False" 
+                output="screen">
+            </node>
+        
+        </group>
+    
+
+        <group if="$(arg use_imu)">
+            <node name="xsenskinematics" pkg="hands_only" type="xsenskinematics.py">
+            </node>
+            <!-- <node name="hand_controller" pkg="hands_only" type="hand_controller" output="screen">
+            </node> -->
+        </group>    
+
+
+        <group unless="$(arg use_imu)">
+            <node name = "obj_teleop" pkg="gen_objects" type="obj_teleop" output="screen"/>
+            <node name = "teleopkey" pkg="teleop_twist_keyboard_cpp" type="teleopkey" output="screen"/>
+        </group> 
+    </group>
+
+    
+    
+    
+    <group unless="$(arg hands_only)">
+        
+            <!-- <include file="$(find human_factor)/launch/human_factor.launch">
+                <arg name="use_imu" value="$(arg use_imu)"/>
+                <arg name="interface_type" value="$(arg interface_type)"/>
+            </include> -->
+            
+        
+    </group>
+
+</launch>

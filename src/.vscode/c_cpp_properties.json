@@ -1,0 +1,34 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/jang/moca_ws/devel/include/**",
+        "/opt/ros/melodic/include/**",
+        "/opt/openrobots/include/**",
+        "/opt/openrobots/include/**",
+        "/home/jang/moca_ws/src/controllers/dghc/include/**",
+        "/home/jang/catkin_ws/src/harcobot_description/include/**",
+        "/home/jang/moca_ws/src/hrii_franka/hrii_franka_interface/include/**",
+        "/home/jang/moca_ws/src/hrii_robot_interface/hrii_gri_interface/include/**",
+        "/home/jang/moca_ws/src/hrii_moca/hrii_moca_control/include/**",
+        "/home/jang/moca_ws/src/hrii_robot_interface/hrii_mor_interface/include/**",
+        "/home/jang/moca_ws/src/hrii_robot_interface/hrii_ra_interface/include/**",
+        "/home/jang/moca_ws/src/hrii_robotnik/hrii_robotnik_control/include/**",
+        "/home/jang/moca_ws/src/hrii_robotnik/hrii_robotnik_gazebo/include/**",
+        "/home/jang/moca_ws/src/hrii_utils/include/**",
+        "/home/jang/moca_ws/src/controllers/whqp/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

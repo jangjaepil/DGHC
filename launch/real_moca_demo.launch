@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<launch>
+ 
+    <!-- General parameters -->
+    <arg name="interface_type" default="$(optenv INTERFACE_TYPE SIMULATION)"/>
+    
+    <arg name="launch_rviz" default="false"/>
+
+    <!-- General simulation parameters -->
+    <arg name="launch_gazebo_gui" default="true"/>
+
+    <!-- General robot parameters -->
+    <arg name="robot_model" default="moca"/>
+    <arg name="arm_model" default="franka"/>
+    <arg name="arm_id" default="franka"/>
+    <arg name="robot_id" default="$(optenv ROBOT_ID robot)"/>
+    <arg name="robot_brand" default="$(arg robot_model)"/>
+    <arg name="arm_transmission_type" default="effort"/>
+    <arg name="launch_gripper" default="no_gripper"/>
+    <arg name="robot_interface_config_file" default="$(eval find('hrii_' + arg('robot_brand') + '_interface') + '/config/' + arg('robot_model') + '_no_gripper.yaml')"/>
+    <!-- <arg name="launch_interactive_marker" default="true"/> -->
+
+    <!-- Robot hardware parameters -->
+    <arg name="robot_arm_ip" default="$(optenv ROBOT_ARM_IP 192.168.1.11)"/>
+    <!-- <arg name="robot_arm_ip" default="$(optenv ROBOT_ARM_IP 192.168.0.101)"/> -->
+    <!-- <arg name="robot_arm_ip" default="172.16.0.2"/> -->
+
+                                         
+    <arg name="is_floating_base_robot" default="true"/>
+
+    <!-- Admittance controller parameters -->
+    <arg name="inertia_settings" default="medium"/>
+    <arg name="inertial_yaw_scaling" default="0.33"/>
+    <arg name="damping_scale_factor" default="10.0"/>
+
+    <!-- Load robot generic interface-->
+    <include file="$(find hrii_floating_base_robot_controllers)/launch/generic_robot_launcher.xml" pass_all_args="true"/>
+
+    <group ns="$(arg robot_id)">
+        <node name="dghc_demo" pkg="dghc" type="dghc_demo" output = "screen"/>
+        <!-- Load admittance controller -->
+        <node pkg="hrii_robotnik_control" type="admittance_controller_node" name="admittance_controller_node" required="true">
+            <param name="inertia_settings" value="$(arg inertia_settings)"/>
+            <param name="inertial_yaw_scaling" value="$(arg inertial_yaw_scaling)"/>
+            <param name="damping_scale_factor" value="$(arg damping_scale_factor)"/>
+            <remap from="admittance_controller_node/cmd_vel" to="/$(arg robot_id)/robotnik_base_control/cmd_vel"/>
+            <remap from="admittance_controller_node/mass_matrix" to="/mass_matrix"/>
+            <remap from="admittance_controller_node/vir_torque" to="/vir_torque"/>
+        </node>
+    </group>
+
+    <node name="mode_pub_node_demo" pkg="dghc" type="mode_pub_node_demo" output = "screen"/>
+    
+
+</launch>

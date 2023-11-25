@@ -1,0 +1,12 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/jang/moca_ws/devel/lib/python2.7/dist-packages",
+        "/opt/ros/melodic/lib/python2.7/dist-packages",
+        "/opt/openrobots/lib/python3.10/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/jang/moca_ws/devel/lib/python2.7/dist-packages",
+        "/opt/ros/melodic/lib/python2.7/dist-packages",
+        "/opt/openrobots/lib/python3.10/site-packages"
+    ]
+}

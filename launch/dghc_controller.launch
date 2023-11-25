@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+
+<launch>
+
+
+<node name = "dghc" pkg="dghc" type="dghc" output="screen"/>
+<node name = "admittance_node" pkg="admittance" type="admittance_node"/>
+<node name = "mode_pub_node" pkg="dghc" type="mode_pub_node" output="screen"/>
+</launch>
