@@ -43,9 +43,9 @@ include_directories(
 )
 
 add_executable(dghc
-  src/dghc.cpp
-  src/GHCProjections.cpp
-  src/dghc_controller.cpp
+  src/88/dghc.cpp
+  src/88/GHCProjections.cpp
+  src/88/dghc_controller.cpp
   
 )
 
@@ -63,6 +63,16 @@ add_executable(dghc_demo
 
 )
 
+add_executable(dghc_RAL
+  src/RAL/dghc_RAL.cpp
+  src/RAL/GHCProjections_RAL.cpp
+  src/RAL/dghc_controller_RAL.cpp
+)
+
+add_executable(trajectory_RAL
+src/RAL/trajectoryMaker.cpp
+)
+
 add_executable(dghc_alchemist
   src/alchemist/dghc_alchemist.cpp
   src/alchemist/GHCProjections_alchemist.cpp
@@ -71,7 +81,7 @@ add_executable(dghc_alchemist
 )
 
 add_executable(mode_pub_node
-  src/mode_pub.cpp
+  src/88/mode_pub.cpp
 )
 
 
@@ -81,6 +91,10 @@ add_executable(mode_pub_node_fullbody
 
 add_executable(mode_pub_node_demo
   src/demo/mode_pub_demo.cpp
+)
+
+add_executable(fsm_node_RAL
+  src/RAL/fsm_RAL.cpp
 )
 
 add_executable(mode_pub_node_alchemist
@@ -99,9 +113,18 @@ target_link_libraries(mode_pub_node_demo
   ${catkin_LIBRARIES}
 )
 
+target_link_libraries(fsm_node_RAL 
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(trajectory_RAL 
+  ${catkin_LIBRARIES}
+)
+
 target_link_libraries(mode_pub_node_alchemist 
   ${catkin_LIBRARIES}
 )
+
 
 target_link_libraries(dghc
   
@@ -122,6 +145,15 @@ target_link_libraries(dghc_fullbody
 )
 
 target_link_libraries(dghc_demo
+  
+  ${catkin_LIBRARIES}
+  
+  pinocchio::pinocchio
+  matlogger2::matlogger2
+
+)
+
+target_link_libraries(dghc_RAL
   
   ${catkin_LIBRARIES}
   

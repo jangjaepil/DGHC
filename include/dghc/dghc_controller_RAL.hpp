@@ -3,6 +3,10 @@
 #include "geometry_msgs/WrenchStamped.h"
 #include "hrii_ra_interface/robot_interface/RoboticArmInterface.h"
 #include "hrii_mor_interface/MobileRobotInterface.h"
+// #include "hrii_franka_gripper/GripperInterfaceFranka.h"
+#include "hrii_utils/ConfigOptions.h"
+#include <std_msgs/Bool.h>
+#include <std_msgs/Int16.h>
 #define MIN_LINEAR_WRENCH 2
 #define MAX_LINEAR_WRENCH 100
 #define MIN_ANGULAR_WRENCH 0.1
@@ -45,14 +49,22 @@ public:
     bool alphasSetDone(const std::vector<double>& vec1, const std::vector<double>& vec2, double epsilon);
     void energy_filter();
     void externel_wrench_callback(const geometry_msgs::WrenchStamped &externel_wrench);
+    void reset_callback(const std_msgs::Bool &reset);
+    void curruent_step_callback(const std_msgs::Int16 &step);
     void test();
+    bool pick_obj();
+    bool place_obj();
+    // bool gripper_button();
+    void set_fsm_args();
     int run();
     void checkDeadzone(double &value, int wrenchType);
     Eigen::Matrix<double, 7, 1> saturateTorqueRate(const Eigen::Matrix<double, 7, 1> &tau_d_calculated,const Eigen::Matrix<double, 7, 1> &tau_J_d);
+
 private:
 
    HRII::MORInterface::MobileRobotInterface::Ptr mobile_base_interface_;
    HRII::RAInterface::RoboticArmInterface::Ptr arm_interface_;
+//    HRII::GRIInterface::GripperInterfaceBase::Ptr gripper_interface_;
    Eigen::VectorXd arm_tau_J_d;
    std::string interface_type_str;
    std::string robot_ns;
@@ -70,7 +82,8 @@ private:
    Eigen::VectorXd vir_force = Eigen::VectorXd::Zero(3);
    Eigen::VectorXd toq = Eigen::VectorXd::Zero(7);
    Eigen::VectorXd toqT = Eigen::VectorXd::Zero(10);
-   
+   Eigen::VectorXd projectV = Eigen::VectorXd::Zero(10);
+   Eigen::VectorXd toqcheck = Eigen::VectorXd::Zero(10);
    ros::NodeHandle nh;
   
    ros::Subscriber obstacle_states;
@@ -79,10 +92,19 @@ private:
    ros::Subscriber priority_input_sub;
    ros::Subscriber mode_sub;
    ros::Subscriber mass_sub;
+   ros::Subscriber reset_sub;
+   ros::Subscriber current_step_sub;
    
    ros::Publisher Vir_torque;
    ros::Publisher alpha_pub;
+   ros::Publisher c_pose_pub;
 
+   ros::Publisher picked_pub;
+   ros::Publisher distance_flag_pub;
+   ros::Publisher force_flag_pub;
+   ros::Publisher button_pub;
+   ros::Publisher placed_pub;
+   
    double dt = 0.001;
    
    Eigen::MatrixXd jt;
@@ -113,7 +135,7 @@ private:
    
    
   
-   Eigen::MatrixXd j0 = Eigen::MatrixXd::Zero(6,10);
+   Eigen::MatrixXd j0 = Eigen::MatrixXd::Zero(7,10);
    Eigen::MatrixXd jmt = Eigen::MatrixXd::Zero(3,3);
    Eigen::MatrixXd jm = Eigen::MatrixXd::Zero(6,3);
    Eigen::MatrixXd jmt2d = Eigen::MatrixXd::Zero(2,3);  
@@ -150,8 +172,8 @@ private:
    
   
 
-   Eigen::VectorXd wrench0;
-   Eigen::VectorXd wrench06;
+   Eigen::VectorXd wrench0 = Eigen::VectorXd::Zero(7);
+   Eigen::VectorXd wrench06 = Eigen::VectorXd::Zero(6);
    Eigen::VectorXd wrenchHand;
    Eigen::VectorXd wrenchExt_tmp = Eigen::VectorXd::Zero(6); 
    double wrenchObs0;
@@ -212,10 +234,13 @@ private:
    Eigen::Matrix3d mRe = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::Matrix3d wRe = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::MatrixXd wRe_e =  Eigen::MatrixXd::Identity(6,6);
+   Eigen::MatrixXd wRft_e =  Eigen::MatrixXd::Identity(6,6);
    Eigen::Matrix3d eRd = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::Matrix3d wRd = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::MatrixXd R_m_e = Eigen::MatrixXd::Identity(6,6);
    Eigen::Matrix3d R_d = Eigen::Matrix3d::Identity(3,3);
+   Eigen::Matrix3d eRft = Eigen::Matrix3d::Identity(3,3);
+   Eigen::Matrix3d wRft = Eigen::Matrix3d::Identity(3,3);
    
    
    Eigen::VectorXd init_q =  Eigen::VectorXd::Zero(7);
@@ -338,4 +363,19 @@ private:
    double a01 =0;
    double a02 =0;
    double a12 =0;
+
+   std_msgs::Bool picked;
+   std_msgs::Bool distance_flag;
+   std_msgs::Bool force_flag;
+   std_msgs::Bool girpperButton;
+   std_msgs::Bool placed;
+   std_msgs::Int16 currentStep;
+   // object position w.r.t world frame
+   Eigen::Vector3d object_position;
+   Eigen::Vector3d ee2hand_distance;
+   //Thresholds for Hand Guidance
+   const double DISTANCE_THRESHOLD = 0.1;
+   const double FORCE_THRESHOLD = 0.1;
+
+   
 };
