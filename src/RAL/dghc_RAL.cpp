@@ -20,11 +20,16 @@ int main(int argc, char **argv)
     JOINT_LIMIT4,
     JOINT_LIMIT5,
     JOINT_LIMIT6,
-    JOINT_LIMIT7
+    JOINT_LIMIT7,
+    OBSTACLE_AVOIDANCE_0=11,
+    OBSTACLE_AVOIDANCE_1,
+    OBSTACLE_AVOIDANCE_4,
+    OBSTACLE_AVOIDANCE_7=14,
+    
   };
  
   int DOFsize = 10;
-  int numTasks = 11;
+  int numTasks = 15;
   Eigen::VectorXd tasksize;
   tasksize = Eigen::VectorXd::Zero(numTasks);
   
@@ -40,6 +45,10 @@ int main(int argc, char **argv)
   tasksize[JOINT_LIMIT5] = 1;
   tasksize[JOINT_LIMIT6] = 1; 
   tasksize[JOINT_LIMIT7] = 1; 
+  tasksize[OBSTACLE_AVOIDANCE_0] = 1;
+  tasksize[OBSTACLE_AVOIDANCE_1] = 1;
+  tasksize[OBSTACLE_AVOIDANCE_4] = 1;
+  tasksize[OBSTACLE_AVOIDANCE_7] = 1;
   
   dghc_controller force_node;
   force_node.init(numTasks, tasksize, DOFsize);

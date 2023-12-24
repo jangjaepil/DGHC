@@ -3,8 +3,18 @@
 #include "geometry_msgs/WrenchStamped.h"
 #include "hrii_ra_interface/robot_interface/RoboticArmInterface.h"
 #include "hrii_mor_interface/MobileRobotInterface.h"
+#include <human_factor/LinkStateArray.h>
+#include <human_factor/LinkState.h>
+#include <human_factor/RiskFactor.h>
+#include <std_msgs/Float64MultiArray.h>
 // #include "hrii_franka_gripper/GripperInterfaceFranka.h"
-#include "hrii_utils/ConfigOptions.h"
+// #include "hrii_utils/ConfigOptions.h"
+
+#include <human_factor/LinkStateArray.h>
+#include <human_factor/LinkState.h>
+#include <human_factor/RiskFactor.h>
+#include <std_msgs/Float64MultiArray.h>
+
 #include <std_msgs/Bool.h>
 #include <std_msgs/Int16.h>
 #define MIN_LINEAR_WRENCH 2
@@ -25,14 +35,17 @@ class dghc_controller : public GHCProjections{
 public:
     dghc_controller();
     
-    void obstacle_states_callback(const geometry_msgs::PoseArray::ConstPtr& obstacleState);
-
+    void obstacle_states_callback(const human_factor::LinkStateArray::ConstPtr& obstacleStateMsg);
+    void riskfactor_callback(const human_factor::RiskFactor::ConstPtr& riskfactor);
+    void optitrack_callback(const geometry_msgs::Pose::ConstPtr& opti_pose);
+    void d_dot_callback(const std_msgs::Float64MultiArray::ConstPtr& d_dot_msg);
+    void hand_pose_callback(const geometry_msgs::Pose::ConstPtr& hand_pose);
     void desired_pose_callback(const geometry_msgs::Pose& dsired_pose);
 
-    void mode_input_callback(const std_msgs::Bool::ConstPtr& mode_input);
     void priority_input_callback(const std_msgs::String::ConstPtr& priority_input_string);
     void mass_callback(const geometry_msgs::Inertia& mass_matrix);
 
+    
     std::vector<double> getDesiredAlphas(priorityTuples priority);
     void getModel();
     void getJacobian();
@@ -52,9 +65,6 @@ public:
     void reset_callback(const std_msgs::Bool &reset);
     void curruent_step_callback(const std_msgs::Int16 &step);
     void test();
-    bool pick_obj();
-    bool place_obj();
-    // bool gripper_button();
     void set_fsm_args();
     int run();
     void checkDeadzone(double &value, int wrenchType);
@@ -70,6 +80,7 @@ private:
    std::string robot_ns;
  
    Eigen::VectorXd q = Eigen::VectorXd::Zero(7);
+   Eigen::VectorXd desired_q = Eigen::VectorXd::Zero(7);
    Eigen::VectorXd q_past = Eigen::VectorXd::Zero(7);
    Eigen::VectorXd q_dot = Eigen::VectorXd::Zero(7);
    Eigen::MatrixXd M_j_, M_j_up,C_j_;
@@ -87,23 +98,26 @@ private:
    ros::NodeHandle nh;
   
    ros::Subscriber obstacle_states;
+   ros::Subscriber riskfactor_sub; 
+   ros::Subscriber optitrack_sub; 
+   ros::Subscriber d_dot_sub; 
+   ros::Publisher modelPosepublisher;
+   ros::Publisher modelVelpublisher; 
+
    ros::Subscriber d_pose_sub;
    ros::Subscriber externel_wrench_sub;
    ros::Subscriber priority_input_sub;
-   ros::Subscriber mode_sub;
    ros::Subscriber mass_sub;
    ros::Subscriber reset_sub;
    ros::Subscriber current_step_sub;
+   ros::Subscriber hand_pose_sub;
    
    ros::Publisher Vir_torque;
    ros::Publisher alpha_pub;
    ros::Publisher c_pose_pub;
 
-   ros::Publisher picked_pub;
    ros::Publisher distance_flag_pub;
    ros::Publisher force_flag_pub;
-   ros::Publisher button_pub;
-   ros::Publisher placed_pub;
    
    double dt = 0.001;
    
@@ -145,8 +159,8 @@ private:
    Eigen::MatrixXd jrimpT = Eigen::MatrixXd::Zero(5,10);
    Eigen::MatrixXd jobs0 = Eigen::MatrixXd::Zero(1,10);
    Eigen::MatrixXd jobs1 = Eigen::MatrixXd::Zero(1,10);
-   Eigen::MatrixXd jobs3 = Eigen::MatrixXd::Zero(1,10);
-   Eigen::MatrixXd jobs5 = Eigen::MatrixXd::Zero(1,10);
+   Eigen::MatrixXd jobs4 = Eigen::MatrixXd::Zero(1,10);
+   Eigen::MatrixXd jobs7 = Eigen::MatrixXd::Zero(1,10);
    Eigen::MatrixXd jobs_tmp = Eigen::MatrixXd::Zero(3,10);
    Eigen::MatrixXd jobs_tmp2d = Eigen::MatrixXd::Zero(2,10);
    Eigen::MatrixXd jmimp = Eigen::MatrixXd::Zero(3,10);
@@ -178,8 +192,8 @@ private:
    Eigen::VectorXd wrenchExt_tmp = Eigen::VectorXd::Zero(6); 
    double wrenchObs0;
    double wrenchObs1;
-   double wrenchObs3;
-   double wrenchObs5;
+   double wrenchObs4;
+   double wrenchObs7;
    Eigen::VectorXd wrenchImp = Eigen::VectorXd::Zero(6);
    Eigen::VectorXd wrenchmImp = Eigen::VectorXd::Zero(3);
    Eigen::VectorXd wrenchjl = Eigen::VectorXd::Zero(7);
@@ -211,6 +225,7 @@ private:
    Eigen::Vector3d position7;
    Eigen::Vector2d position72d;
    Eigen::VectorXd position76d = Eigen::VectorXd::Zero(6,1);
+   Eigen::VectorXd hand_position = Eigen::VectorXd::Zero(3);
    
    Eigen::Vector3d vel;
    Eigen::Vector3d vel1;
@@ -233,6 +248,8 @@ private:
    short count = 0;
    Eigen::Matrix3d mRe = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::Matrix3d wRe = Eigen::Matrix3Xd::Identity(3,3);
+   Eigen::Matrix3d w_R_m = Eigen::Matrix3Xd::Identity(3,3);
+   Eigen::Matrix3d w_R_o = Eigen::Matrix3Xd::Identity(3,3);
    Eigen::MatrixXd wRe_e =  Eigen::MatrixXd::Identity(6,6);
    Eigen::MatrixXd wRft_e =  Eigen::MatrixXd::Identity(6,6);
    Eigen::Matrix3d eRd = Eigen::Matrix3Xd::Identity(3,3);
@@ -288,28 +305,29 @@ private:
    
    
 
-   Eigen::VectorXd f02d = Eigen::VectorXd::Zero(2);
-   Eigen::VectorXd f0 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd f1 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd f3 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd f5 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd f_tmp = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd f02d = Eigen::VectorXd::Zero(2);
+    Eigen::VectorXd f0 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd f1 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd f4 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd f7 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd f_tmp = Eigen::VectorXd::Zero(3);
 
-   Eigen::VectorXd u1 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd u3 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd u5 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd u0 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd u1 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd u4 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd u7 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd u0 = Eigen::VectorXd::Zero(3);
 
-   Eigen::VectorXd D02d = Eigen::VectorXd::Zero(2);
-   Eigen::VectorXd D0v = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D0 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D1 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D3 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D5 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D01 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D11 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D31 = Eigen::VectorXd::Zero(3);
-   Eigen::VectorXd D51 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D02d = Eigen::VectorXd::Zero(2);
+    Eigen::VectorXd D0v = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D0 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D1 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D3 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D5 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D01 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D11 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D31 = Eigen::VectorXd::Zero(3);
+    Eigen::VectorXd D51 = Eigen::VectorXd::Zero(3);
+
    
    Eigen::Vector3d quatV = Eigen::Vector3d::Zero(3,1);
  
@@ -320,9 +338,9 @@ private:
    short min_i = 0;
    double d_min = 0;
    double proj_margin = 0;
-
+   std::array<Eigen::Vector3d, 11> obstacleStates;
    double d[4][11] = {};
-   double d_dot[4][11] = {};
+   float d_dot[44] = {};
    double d_past[4][11] = {};
    double dref[4] = {};
    double alpha[4] = {};
@@ -348,7 +366,6 @@ private:
 
    bool priorityChanged;
    bool alphaChangeDone;
-   bool modeInput;
 
 
    Eigen::Vector3d relativePosition;
@@ -364,18 +381,38 @@ private:
    double a02 =0;
    double a12 =0;
 
-   std_msgs::Bool picked;
    std_msgs::Bool distance_flag;
    std_msgs::Bool force_flag;
-   std_msgs::Bool girpperButton;
-   std_msgs::Bool placed;
    std_msgs::Int16 currentStep;
    // object position w.r.t world frame
    Eigen::Vector3d object_position;
    Eigen::Vector3d ee2hand_distance;
    //Thresholds for Hand Guidance
-   const double DISTANCE_THRESHOLD = 0.1;
-   const double FORCE_THRESHOLD = 0.1;
+   const double DISTANCE_THRESHOLD = 0.3;
+   const double FORCE_THRESHOLD = 15;
+   const double TORQUE_THRESHOLD = 15;
+   //risk factor
+   std::array<double,44> riskFactorArray;
+   double factor_lv1=2;
+   double factor_lv2=3;
+   //optitrack
+   Eigen::Vector3d optitrack_p = Eigen::Vector3d::Zero();
+   Eigen::Quaterniond optitrack_q;
 
    
+   Eigen::Quaterniond mobile_quat_r;
+   Eigen::VectorXd mobile_pose_r = Eigen::VectorXd::Zero(3);
+   Eigen::Quaterniond mobile_quat_filtered;
+   nav_msgs::Odometry mobile_base_odom_filtered;
+   bool marker_flag = false;
+   bool optitrack_sign = false;
+   Eigen::Matrix4d init_w_T_m, init_w_T_o;
+   Eigen::Matrix4d real_mobile_Tf = Eigen::MatrixXd::Identity(4,4);
+   Eigen::Matrix4d new_w_T_o = Eigen::MatrixXd::Identity(4,4);
+   Eigen::Matrix4d init_o_T_m = Eigen::MatrixXd::Identity(4,4);
+   Eigen::Matrix4d w_T_m = Eigen::MatrixXd::Identity(4,4);
+   Eigen::Matrix4d w_T_o = Eigen::MatrixXd::Identity(4,4);
+   Eigen::Matrix4d w_T_m_raw = Eigen::MatrixXd::Identity(4,4);
+
+
 };

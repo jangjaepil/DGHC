@@ -42,6 +42,7 @@ int main(int argc, char **argv)
   tasksize[JOINT_LIMIT7] = 1; 
   
   dghc_controller force_node;
+  
   force_node.init(numTasks, tasksize, DOFsize);
   
 

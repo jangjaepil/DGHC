@@ -289,7 +289,6 @@ void dghc_controller::d_dot_callback(const std_msgs::Float64MultiArray::ConstPtr
     for(int i=0; i<44; i++){
         d_dot[i] = d_dot_msg->data[i];
     }
-    
 }
 
 void dghc_controller::getModel(){

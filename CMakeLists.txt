@@ -27,6 +27,7 @@ find_package(catkin REQUIRED COMPONENTS
   human_factor
   hrii_robot_msgs
   hrii_utils
+  control_msgs # for qbHand
 )
 
 catkin_package()
@@ -97,6 +98,10 @@ add_executable(fsm_node_RAL
   src/RAL/fsm_RAL.cpp
 )
 
+add_executable(qb_interface_node
+  src/RAL/qb_interface.cpp
+)
+
 add_executable(mode_pub_node_alchemist
   src/alchemist/mode_pub_alchemist.cpp
 )
@@ -114,6 +119,10 @@ target_link_libraries(mode_pub_node_demo
 )
 
 target_link_libraries(fsm_node_RAL 
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(qb_interface_node 
   ${catkin_LIBRARIES}
 )
 

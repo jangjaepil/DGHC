@@ -7,22 +7,26 @@ dghc_controller::dghc_controller(){
     
     d_pose_sub = nh.subscribe("/desired_pose", 1000, &dghc_controller::desired_pose_callback,this);
     c_pose_pub = nh.advertise<geometry_msgs::Pose>("/current_pose", 1000);
+    hand_pose_sub = nh.subscribe("/natnet/hand_pose", 1000, &dghc_controller::hand_pose_callback,this);
+    obstacle_states = nh.subscribe("/human_factor/human_joint_positions", 1000, &dghc_controller::obstacle_states_callback,this);
+    riskfactor_sub = nh.subscribe("/human_factor/risk_factor", 500, &dghc_controller::riskfactor_callback,this);
+    optitrack_sub = nh.subscribe("/natnet/robot_pose", 500, &dghc_controller::optitrack_callback,this);
+    modelPosepublisher = nh.advertise<geometry_msgs::PoseArray>("/human_factor/robot_joint_positions",500);
+    modelVelpublisher = nh.advertise<geometry_msgs::PoseArray>("/human_factor/robot_joint_velocities",500);
+    d_dot_sub = nh.subscribe("/human_factor/rel_vel",500 ,&dghc_controller::d_dot_callback,this);
     
-    picked_pub = nh.advertise<std_msgs::Bool>("/picked",1000);
+
     distance_flag_pub = nh.advertise<std_msgs::Bool>("/distance_flag",1000);
     force_flag_pub = nh.advertise<std_msgs::Bool>("/force_flag",1000);
-    button_pub = nh.advertise<std_msgs::Bool>("/button",1000);
-    placed_pub = nh.advertise<std_msgs::Bool>("/placed",1000);
-    
+    current_step_sub = nh.subscribe("/current_step", 1000,&dghc_controller::curruent_step_callback, this);
+    reset_sub = nh.subscribe("/reset",1000, &dghc_controller::reset_callback, this);
     
     priority_input_sub = nh.subscribe("/priorityInput", 1000, &dghc_controller::priority_input_callback,this);
-    mode_sub  = nh.subscribe("/modeInput", 1000, &dghc_controller::mode_input_callback,this);
     mass_sub  = nh.subscribe("/mass_matrix", 1000, &dghc_controller::mass_callback,this);
     Vir_torque = nh.advertise<geometry_msgs::Wrench>("/vir_torque", 1000);
     alpha_pub = nh.advertise<geometry_msgs::Wrench>("/alphas", 1000);
     externel_wrench_sub = nh.subscribe("/hrii/ati_wrench", 1000, &dghc_controller::externel_wrench_callback, this);
-    reset_sub = nh.subscribe("/reset",1000, &dghc_controller::reset_callback, this);
-    current_step_sub = nh.subscribe("/current_step", 1000,&dghc_controller::curruent_step_callback, this);
+
 
     d_euler<<0,M_PI,M_PI;
     // lbq << -2.8973,-1.7628,-2.8973,-3.0718,-2.8973,-0.0175,-2.8973;
@@ -39,8 +43,8 @@ dghc_controller::dghc_controller(){
     
     transitionTime =0;
     previousTime=ros::Time::now();
-    modeInput = false;
-    //priorityInput.emplace_back(std::make_tuple(3,0,0));
+    
+    priorityInput.emplace_back(std::make_tuple(3,0,0));
     priorityInput.emplace_back(std::make_tuple(4,0,0));
     priorityInput.emplace_back(std::make_tuple(5,0,0));
     priorityInput.emplace_back(std::make_tuple(6,0,0));
@@ -49,16 +53,13 @@ dghc_controller::dghc_controller(){
     priorityInput.emplace_back(std::make_tuple(9,0,0));
     priorityInput.emplace_back(std::make_tuple(2,0,0));
     priorityInput.emplace_back(std::make_tuple(0,0,0));
-    
+    prevFilteredPriority = priorityInput;
     priorityChanged = true;
     alphaChangeDone = true;
 
-    picked.data = false;
     distance_flag.data = false;
     force_flag.data = false;
-    girpperButton.data = false;
-    placed.data = false;
-    currentStep.data = 0;
+    currentStep.data = -1;
     
     std::string interface_config_file_path = "/home/robot/master_harco_ws/src/hrii_moca/hrii_moca_interface/config/moca_no_gripper.yaml";
     
@@ -77,17 +78,6 @@ dghc_controller::dghc_controller(){
     if (!arm_interface_->init())
         std::cout << "Error : arm_interface_->init()" << std::endl;
 
-    // // Get Gripper Configuration    
-    // std::string config_path = ros::package::getPath("hrii_franka_gripper");
-    // config_path.append("/config/franka_gripper.yaml");
-    // HRII_Utils::ConfigOptions config_options;
-    // if(!HRII_Utils::ConfigOptions::ParseConfigFile(config_path, config_options))
-    //     std::cout << "Error :  ParseConfigFile()" << std::endl;
-    // // Get Gripper Interface
-    // gripper_interface_ = HRII::GRIInterface::GripperInterfaceBase::GenerateGripperInterface("HRII::FRANKA::FrankaGripperInterface", "HARDWARE");
-    // if(!gripper_interface_->init(config_options))
-    //     std::cout << "Error : gripper_interface_->init()" << std::endl;
-
     // Get Mobile Interface
     mobile_base_interface_ = HRII::MORInterface::MobileRobotInterface::GenerateMobileRobotInterface(interface_config_file_path);
     if (!mobile_base_interface_->init())
@@ -102,9 +92,66 @@ dghc_controller::dghc_controller(){
 
     sensor_msgs::JointState arm_joint_state = *(arm_interface_->getJointsStates());
     init_q = Eigen::Map<Eigen::VectorXd>(arm_joint_state.position.data(), arm_interface_->getJointsNum());
+    q=init_q;
+    desired_q = init_q;
     q_past = init_q;
 }    
-
+void dghc_controller::obstacle_states_callback(const human_factor::LinkStateArray::ConstPtr& obstacleStateMsg)
+{
+    //   std::vector<std::string> modelNames =  obstacleStateMsg->states ;
+    int obstacleIndex = 0;
+    int dPositionIndex = 0;
+    obstacleStates.fill(Eigen::Vector3d::Zero(3));
+    //   obstacleStates.s
+    // pelvis, t12, head, right_forarm, right_hand, left_forearm, left_hand, right_lower_leg, right_foot, left_lower_leg, left_foot
+    for(int i=0; i < 11;i++){
+    obstacleStates[i](0) = obstacleStateMsg->states[i].pose.position.x;
+    obstacleStates[i](1) = obstacleStateMsg->states[i].pose.position.y;
+    obstacleStates[i](2) = obstacleStateMsg->states[i].pose.position.z;
+    }
+}
+void dghc_controller::hand_pose_callback(const geometry_msgs::Pose::ConstPtr& hand_pose){
+    hand_position(0) = hand_pose->position.x;
+    hand_position(1) = hand_pose->position.y;
+    hand_position(2) = hand_pose->position.z;
+    
+   
+            
+}
+void dghc_controller::riskfactor_callback(const human_factor::RiskFactor::ConstPtr& riskfactor){
+    if (riskfactor->factor.size() == 44) 
+    {
+        // Access the elements of the received array
+        for (size_t i = 0; i < riskfactor->factor.size(); ++i) {
+            riskFactorArray[i] = riskfactor->factor[i];
+            //ROS_INFO("Received value[%zu]: %f", i, riskFactorArray[i]);
+        }
+    } 
+    else
+    {
+        ROS_WARN("Received array size is not 44!");
+    }
+}
+void dghc_controller::optitrack_callback(const geometry_msgs::Pose::ConstPtr& opti_pose){
+    // mobile pose data from optitrack natnet
+    optitrack_p(0) = opti_pose->position.x;
+    optitrack_p(1) = opti_pose->position.y;
+    optitrack_p(2) = opti_pose->position.z;
+    // opotitrack_r = Eigen::Quaterniond(opti_pose->orientation.x, opti_pose->orientation.y, opti_pose->orientation.z, opti_pose->orientation.w).normalized().toRotationMatrix();
+    optitrack_q.x() = opti_pose->orientation.x;
+    optitrack_q.y() = opti_pose->orientation.y;
+    optitrack_q.z() = opti_pose->orientation.z;
+    optitrack_q.w() = opti_pose->orientation.w;
+    optitrack_sign = true;
+      // std::cout << "optitrack_p: " << optitrack_p << std::endl;
+    //  std::cout << "optitrack_sign: " << optitrack_sign << std::endl;
+}
+void dghc_controller::d_dot_callback(const std_msgs::Float64MultiArray::ConstPtr& d_dot_msg){
+    for(int i=0; i<44; i++){
+        d_dot[i] = d_dot_msg->data[i];
+    }
+    
+}
 void dghc_controller::mass_callback(const geometry_msgs::Inertia& mass_matrix)
 {
     mobile_mass<<mass_matrix.ixx,mass_matrix.ixy,mass_matrix.ixz,
@@ -130,15 +177,23 @@ void dghc_controller::externel_wrench_callback(const geometry_msgs::WrenchStampe
 void dghc_controller::reset_callback(const std_msgs::Bool &reset){
     // initialize all signal
     if(reset.data){
-        picked.data = false;
         distance_flag.data = false;
         force_flag.data = false;
-        girpperButton.data = false;
-        placed.data = false;
     }
 }
 
 void dghc_controller::curruent_step_callback(const std_msgs::Int16 &step){
+    std::cout<<"currentStep: "<<currentStep.data<<std::endl;
+    std::cout<<"step: "<<step.data<<std::endl;
+
+    if(currentStep.data != step.data)
+    {
+         
+        desired_q = q;
+        std::cout<<"desired_q in callback: "<<desired_q.transpose()<<std::endl;
+        
+
+    }
     currentStep.data = step.data;
 }
 
@@ -157,9 +212,7 @@ void dghc_controller::desired_pose_callback(const geometry_msgs::Pose& desired_p
     
     wRd  = d_quat.normalized().toRotationMatrix();
             
-           
-    
-    }
+}
 
 
 void dghc_controller::priority_input_callback(const std_msgs::String::ConstPtr& priority_input_string){
@@ -172,7 +225,7 @@ void dghc_controller::priority_input_callback(const std_msgs::String::ConstPtr& 
     priorityInput.clear();
     prevPriorityInputString= priority_input_string->data;
     
-    int numTask = 10;
+    int numTask = 15;
     double value;
     while(ss>> value){
         if(value < 0 || value >= numTask){
@@ -196,49 +249,82 @@ void dghc_controller::priority_input_callback(const std_msgs::String::ConstPtr& 
     }
 }
 
-void dghc_controller::mode_input_callback(const std_msgs::Bool::ConstPtr& mode_input){
-    if(mode_input->data == modeInput){
-        return;
-    }
-    modeInput = mode_input->data;
-}
-
 
 void dghc_controller::getModel(){
     // Update robot state
     if(!mobile_base_interface_->updateRobotState())
         std::cout << "Fail to Update Mobile Robot State" << std::endl;
 
-    if(!arm_interface_->updateRobotState(mobile_base_interface_->getOdometry()))
-        std::cout << "Fail to Update Manipulatro State" << std::endl;
-
-    // Get arm joint state
-    sensor_msgs::JointState arm_joint_state = *(arm_interface_->getJointsStates());
-    
-    q = Eigen::Map<Eigen::VectorXd>(arm_joint_state.position.data(), arm_interface_->getJointsNum());
-    q_dot = Eigen::Map<Eigen::VectorXd>(arm_joint_state.velocity.data(), arm_interface_->getJointsNum());
-    // std::cout<<"q_dot: "<<q_dot<<std::endl;
-   
-    
     nav_msgs::Odometry mobile_base_odom = mobile_base_interface_->getOdometry();
     
-    
+    mobile_pose_r(0) = mobile_base_odom.pose.pose.position.x;
+    mobile_pose_r(1) = mobile_base_odom.pose.pose.position.y;
+    mobile_pose_r(2) = mobile_base_odom.pose.pose.position.z;
    
-   mobile_quat.w() = mobile_base_odom.pose.pose.orientation.w;
-   mobile_quat.x() = mobile_base_odom.pose.pose.orientation.x;
-   mobile_quat.y() = mobile_base_odom.pose.pose.orientation.y;
-   mobile_quat.z() = mobile_base_odom.pose.pose.orientation.z;
+    mobile_quat_r.w() = mobile_base_odom.pose.pose.orientation.w;
+    mobile_quat_r.x() = mobile_base_odom.pose.pose.orientation.x;
+    mobile_quat_r.y() = mobile_base_odom.pose.pose.orientation.y;
+    mobile_quat_r.z() = mobile_base_odom.pose.pose.orientation.z;
    
-   R_m = mobile_quat.normalized().toRotationMatrix();
-   R_m_e.block(0,0,3,3) = R_m;
-   R_m_e.block(3,3,3,3) = R_m;  
-   
-   euler_m = R_m.eulerAngles(2,1,0); //zyx
+    w_R_m = mobile_quat_r.normalized().toRotationMatrix();
+    w_R_o = optitrack_q.normalized().toRotationMatrix();
 
-    mobile_pose(0) = mobile_base_odom.pose.pose.position.x;
-    mobile_pose(1) = mobile_base_odom.pose.pose.position.y;
-    mobile_pose(2) = mobile_base_odom.pose.pose.position.z;
-    // std::cout<<"mobile_pose"<<mobile_pose.transpose()<<std::endl;
+    w_T_m_raw.block(0,0,3,3) = w_R_m;
+    w_T_m_raw.block(0,3,3,1) = mobile_pose_r;
+
+    if(!marker_flag && optitrack_sign){
+        marker_flag = true;
+
+        init_w_T_m.setIdentity();
+        init_w_T_m.block(0,0,3,3) = w_R_m;
+        init_w_T_m.block(0,3,3,1) = mobile_pose_r;
+
+        init_w_T_o.setIdentity();
+        init_w_T_o.block(0,0,3,3) = w_R_o;
+        init_w_T_o.block(0,3,3,1) = optitrack_p;
+
+        init_o_T_m = init_w_T_o.inverse()*init_w_T_m;
+    }
+    
+    if(optitrack_sign){
+
+        new_w_T_o.block(0,0,3,3) = w_R_o;
+        new_w_T_o.block(0,3,3,1) = optitrack_p;
+
+        real_mobile_Tf = new_w_T_o*init_o_T_m;
+
+        mobile_pose = real_mobile_Tf.block(0,3,3,1);
+
+        R_m = real_mobile_Tf.block(0,0,3,3);
+
+        mobile_quat_filtered = R_m;
+
+        optitrack_sign = false;
+    }
+
+    mobile_base_odom_filtered = mobile_base_odom;
+    mobile_base_odom_filtered.pose.pose.position.x = mobile_pose(0);
+    mobile_base_odom_filtered.pose.pose.position.y = mobile_pose(1);
+    mobile_base_odom_filtered.pose.pose.position.z = mobile_pose(2);
+    mobile_base_odom_filtered.pose.pose.orientation.w = mobile_quat_filtered.w();
+    mobile_base_odom_filtered.pose.pose.orientation.x = mobile_quat_filtered.x();
+    mobile_base_odom_filtered.pose.pose.orientation.y = mobile_quat_filtered.y();
+    mobile_base_odom_filtered.pose.pose.orientation.z = mobile_quat_filtered.z();
+    //mobile_base_interface_->getOdometry()
+    std::cout<<"filtered_odom: "<<mobile_pose.transpose()<<std::endl;
+    std::cout << "filtered rotation : " << mobile_quat_filtered.toRotationMatrix() << std::endl;
+    if(!arm_interface_->updateRobotState(mobile_base_odom_filtered))
+        std::cout << "Fail to Update Manipulatro State" << std::endl;
+    // Get arm joint state
+    sensor_msgs::JointState arm_joint_state = *(arm_interface_->getJointsStates());
+    q = Eigen::Map<Eigen::VectorXd>(arm_joint_state.position.data(), arm_interface_->getJointsNum());
+    q_dot = Eigen::Map<Eigen::VectorXd>(arm_joint_state.velocity.data(), arm_interface_->getJointsNum());
+
+    R_m_e.block(0,0,3,3) = R_m;
+    R_m_e.block(3,3,3,3) = R_m;  
+    
+    euler_m = R_m.eulerAngles(2,1,0); //zyx
+
     mobile_pose2d(0) = mobile_pose(0);
     mobile_pose2d(1) = mobile_pose(1); 
 
@@ -394,10 +480,6 @@ void dghc_controller::getModel(){
       }
     }
 
-    P2d<<1,0,0,
-         0,1,0;
-
-    
     jmt <<1,0,0,
           0,1,0,
           0,0,0;
@@ -469,6 +551,115 @@ void dghc_controller::getModel(){
     {
         R_d = R_m;
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    std::array<Eigen::Vector3d, 4> robotStates = {mobile_pose + R_m*m_distance, position1, position4, position7};
+    std::vector<Eigen::VectorXd> alldistance; //distance direction
+    for(int human=0 ; human<11 ; human++){
+        for(int robot=0 ; robot<4 ; robot++){
+            Eigen::Vector3d relativeDistance = robotStates[robot] - obstacleStates[human];
+            d[robot][human] = sqrt(relativeDistance.transpose()*relativeDistance);//[frame][obstacle number]
+            alldistance.push_back(relativeDistance/d[robot][human]);// [[human1][robot1 ... robot5] ... [human11][robot1 ... robot5]]
+            //std::cout<<"frame : "<<robot<<"\t\t human : "<<human<<"\t\t distance : "<<d[robot][human]<<std::endl;
+        }
+    }
+    
+  
+//////////////////////////////////////////OBSTACLE AVOIDANCE ////////////////////////////////////////
+    P2d<<1,0,0,
+         0,1,0;
+    dref[0] = 0.7; 
+    dref[1] = 0.2;
+    dref[2] = 0.2;
+    dref[3] = 0.3;
+
+    alpha[0] = 0.3;
+    alpha[1] = 0.3;
+    alpha[2] = 0.3;
+    alpha[3] = 0.2;
+
+    int k_avd = 0;
+    int b_avd = 10;
+
+    std::vector<Eigen::VectorXd> allf;
+    // i : frame 
+    for(int i = 0;i<4;i++){
+        f_tmp <<0,0,0;
+        // j : obstacle
+        for(int j = 0; j<11;j++){
+            
+            if(d[i][j]< dref[i]+ alpha[i]){
+                //std::cout<<"riskFactor index No. : "<< 4*i+j << std::endl;
+                //std::cout<<"riskFactor size : "<< riskFactorArray.size() << std::endl;
+                if(riskFactorArray[11*i+j] >= factor_lv2){ // add riskfactor condition
+                    
+                    if(i==0){k_avd = 500;}
+
+                    else if(i==1){k_avd = 100;}
+
+                    else if(i==2){k_avd = 300;}
+
+                    else {k_avd = 100;}
+
+                    f_tmp = f_tmp + alldistance[i+j*4]*(k_avd*(dref[i] + alpha[i] - d[i][j]) - b_avd*d_dot[i*11+j]);
+                }
+            }
+            d_past[i][j] = d[i][j];
+        }
+        
+       
+       if(isnan(f_tmp(0))||isnan(f_tmp(1))||isnan(f_tmp(2))) f_tmp<<0,0,0;
+       
+       allf.push_back(f_tmp);
+    }   
+
+    f02d = P2d*allf[0];
+    f1 = allf[1];
+    f4 = allf[2];
+    f7 = allf[3];
+
+    if(sqrt(f02d.transpose()*f02d)!=0){
+        u2d = f02d/sqrt(f02d.transpose()*f02d);
+    }
+    else{
+        u2d<<0,0;
+    }
+
+    if(sqrt(f1.transpose()*f1)!=0){
+        u1 = f1/sqrt(f1.transpose()*f1);
+    }
+    else{
+        u1<<0,0,0;
+    }
+
+    if(sqrt(f4.transpose()*f4)!=0){
+        u4 = f4/sqrt(f4.transpose()*f4);
+    }
+    else{
+        u4<<0,0,0;
+    }
+
+    if(sqrt(f7.transpose()*f7)!=0){
+        u7 = f7/sqrt(f7.transpose()*f7);
+    }
+    else{
+        u7<<0,0,0;
+    }
+
+    jobs_tmp2d << jmt2d ,Z27;
+    jobs0 = u2d.transpose()*jobs_tmp2d;
+
+    jobs_tmp << jmt ,jt1;
+    jobs1 = u1.transpose()*jobs_tmp;
+
+    jobs_tmp << jmt ,jt4;
+    jobs4 = u4.transpose()*jobs_tmp;
+
+    jobs_tmp << jmt ,jt7;
+    jobs7 = u7.transpose()*jobs_tmp;
+
+
 }
 
 void dghc_controller::getJacobian()
@@ -479,7 +670,6 @@ void dghc_controller::getJacobian()
    allJacobians.push_back(jimp); 
    allJacobians.push_back(jmimp); 
    allJacobians.push_back(jhand); 
-   
    allJacobians.push_back(jjl1); 
    allJacobians.push_back(jjl2); 
    allJacobians.push_back(jjl3); 
@@ -487,6 +677,10 @@ void dghc_controller::getJacobian()
    allJacobians.push_back(jjl5); 
    allJacobians.push_back(jjl6); 
    allJacobians.push_back(jjl7);  
+   allJacobians.push_back(jobs0);
+   allJacobians.push_back(jobs1);
+   allJacobians.push_back(jobs4);
+   allJacobians.push_back(jobs7);
 
    setJacobianMatrices(allJacobians);
 //    std::cout<<"alljacobians:"<<std::endl<<allJacobians[0]<<std::endl;
@@ -517,7 +711,7 @@ void dghc_controller::getWrench()
 
     k_m<<200,0,0,
          0,200,0,
-         0,0,150;
+         0,0,180;
 
     // k_m<<50,0,0,
         //  0,50,0,
@@ -525,17 +719,7 @@ void dghc_controller::getWrench()
 
     b_m<<20,0,0,
          0,20,0,
-         0,0,5;
-
-    k_m_m1<<50,0,0, //20,20,20
-            0,50,0,
-            0,0,50;
-
-    b_m_m1<<20,0,0, //5,5,5
-            0,20,0,
-            0,0,5;
-
-
+         0,0,10;
 
     k_j<<18,0,0,0,0,0,0,
          0,15,0,0,0,0,0,
@@ -545,30 +729,20 @@ void dghc_controller::getWrench()
          0,0,0,0,0,10,0,
          0,0,0,0,0,0,5;
 
-
-    b_j<<9,0,0,0,0,0,0,
-         0,9,0,0,0,0,0,
-         0,0,6,0,0,0,0,
-         0,0,0,6,0,0,0,
-         0,0,0,0,6,0,0,
-         0,0,0,0,0,6,0,
-         0,0,0,0,0,0,2.5;  
-
-    k_j_m1<<5,0,0,0,0,0,0,
-         0,5,0,0,0,0,0,
-         0,0,5,0,0,0,0,
-         0,0,0,5,0,0,0,
-         0,0,0,0,1,0,0,
-         0,0,0,0,0,1,0,
-         0,0,0,0,0,0,0.5;
-
-    b_j_m1<<4.5,0,0,0,0,0,0,
-         0,4.5,0,0,0,0,0,
-         0,0,3,0,0,0,0,
-         0,0,0,3,0,0,0,
-         0,0,0,0,0.5,0,0,
-         0,0,0,0,0,0.5,0,
-         0,0,0,0,0,0,0.1;  
+    b_j<<18,0,0,0,0,0,0,
+         0,15,0,0,0,0,0,
+         0,0,15,0,0,0,0,
+         0,0,0,20,0,0,0,
+         0,0,0,0,10,0,0,
+         0,0,0,0,0,10,0,
+         0,0,0,0,0,0,5;
+    // b_j<<9,0,0,0,0,0,0,
+    //      0,9,0,0,0,0,0,
+    //      0,0,6,0,0,0,0,
+    //      0,0,0,6,0,0,0,
+    //      0,0,0,0,6,0,0,
+    //      0,0,0,0,0,6,0,
+    //      0,0,0,0,0,0,2.5;  
 
     // jl_alpha = 0.174533;//10deg 
     jl_alpha <<0.26,0.26,0.26,0.26,0.26,0.26,0.13;
@@ -597,38 +771,39 @@ void dghc_controller::getWrench()
         }
 
     }
-  // std::cout<<"wrenchjl: "<<wrenchjl.transpose()<<std::endl;
+ 
     wrenchImp = k*(d_pose - position76d) - b*twist7;   // whole body end-effector impedance
-    // std::cout<<"d_pose - position76d: "<<(d_pose - position76d).transpose()<<std::endl;
-    // std::cout<<"k(d_pose - position76d): "<<(k*(d_pose - position76d)).transpose()<<std::endl;
-    // std::cout<<"-btwist7: "<<(-1*b*twist7).transpose()<<std::endl;
-    // std::cout<<"twist7: "<<twist7.transpose()<<std::endl;
-    // std::cout<<"at getwrench wrenchImp: "<<wrenchImp.transpose()<<std::endl;
+    
         
     wRft = wRe*eRft;
     wRft_e.block(0,0,3,3) = wRft;
     wRft_e.block(3,3,3,3) = wRft; 
     wrenchHand = wRft_e * wrenchExt_tmp; // hand guidacne
-   
+    
+
     // initial state or holding pose state 
-    if(currentStep.data==0 || currentStep.data==3){
+    if(currentStep.data==3){
         Eigen::Quaterniond quat0(R_m.transpose()*R_m);
         quatV << quat0.x(),quat0.y(),quat0.z();
         d_position_m <<  mobile_pose2d(0), mobile_pose2d(1), R_m.block(2,0,1,3)*quatV;
-        
         wrenchmImp = k_m*(d_position_m -mobile_pose3d) - b_m*mobile_vel3d; //mobile impedance home position
     }
+
     else{
         Eigen::Quaterniond quat1(R_m.transpose()*R_d);
         quatV << quat1.x(),quat1.y(),quat1.z();
         d_position_m << d_position2d,R_m.block(2,0,1,3)*quatV;
         wrenchmImp = k_m*(d_position_m -mobile_pose3d) - b_m*mobile_vel3d; //mobile impedance impedance
-        //wrench0 = k_j_m1*(init_q -q) - b_j_m1*q_dot;
+        
     }
-    wrench0 = k_j*(q_past -q) - b_j*q_dot;  
+    wrench0 = k_j*(desired_q -q) - b_j*q_dot;  
+    //std::cout<<"desired_q: "<<desired_q.transpose()<<std::endl;
+    //std::cout<<"init_q: "<<init_q.transpose()<<std::endl;
     wrench06 = wrench0.block(0,0,6,1);
-
-
+    wrenchObs0 = sqrt(f02d.transpose()*f02d);         //obstacle avoidance
+    wrenchObs1 = sqrt(f1.transpose()*f1);
+    wrenchObs4 = sqrt(f4.transpose()*f4);       //obstacle avoidance
+    wrenchObs7 = sqrt(f7.transpose()*f7);  
 }
 
 void dghc_controller::setInertia()
@@ -650,14 +825,11 @@ void dghc_controller::setPriority()
     double deltaT = (currentTime-previousTime).toSec();
     previousTime = currentTime;
 
-    
-
     //priority가 변했는지 확인
     priorityFilter();
 
     //priority가 변하지 않았다면, 함수종료
     if(!priorityChanged){
-        // std::cout << "Priority not changed" <<std::endl;
         transitionTime=0;
         return;
     };
@@ -679,11 +851,11 @@ void dghc_controller::setPriority()
     // std::cout << "a02 :\t" << prioritiesVector[2] << std::endl;
     // std::cout << "a12 :\t" << prioritiesVector[12] << std::endl;
     a00 = prioritiesVector[0]; //a00
-    a11 = prioritiesVector[10]; //a11
-    a22 = prioritiesVector[19]; //a22
+    a11 = prioritiesVector[11]; //a11
+    a22 = prioritiesVector[21]; //a22
     a01 = prioritiesVector[1]; //a01
     a02 = prioritiesVector[2]; //a02
-    a12 = prioritiesVector[11]; //a12
+    a12 = prioritiesVector[12]; //a12
     
     const double transitionDuration = 0.3;
     changeAlphas(prioritiesVector,transitionTime,deltaT,transitionDuration);
@@ -694,11 +866,13 @@ void dghc_controller::setPriority()
     for(unsigned int i=0; i<numberOfTasks; i++){
         for(unsigned int j=i; j<numberOfTasks; j++){
             if(prioritiesVector[counter] < 0){
-                std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector[counter] << " < 0" << std::endl;
+                prioritiesVector[counter] = 0;
+                // std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector[counter] << " < 0" << std::endl;
                 return;
             }
             if(prioritiesVector[counter] > 1){
-                std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector[counter] << " > 1" << std::endl;
+                prioritiesVector[counter] = 1;
+                // std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector[counter] << " > 1" << std::endl;
                 return;
             }
             setAlphaIJ(i,j,prioritiesVector[counter]);
@@ -784,12 +958,12 @@ std::vector<double> dghc_controller::getDesiredAlphas(priorityTuples tupleVector
 
 //priorityInput에 저장된 값들을 변경하여, DesiredPriority를 재조정 
 void dghc_controller::setTrackingPriority(const int manipulatorTaskNum , const int mobileTaskNum, const int poseTaskNum){
-    
     filteredPriority = priorityInput;
 
 }
 
 void dghc_controller::setObstaclePrirority(const std::vector<int> obstacleTaskNums){
+    
     //d_ref보다 d_min이 크면, Task에서 Obstacle Avoidance 삭제 
     if(f02d.norm()==0){
         for (auto it = filteredPriority.begin(); it != filteredPriority.end();++it){
@@ -807,7 +981,7 @@ void dghc_controller::setObstaclePrirority(const std::vector<int> obstacleTaskNu
             }
         }
     }
-    if(f3.norm()==0){
+    if(f4.norm()==0){
         for (auto it = filteredPriority.begin(); it != filteredPriority.end();++it){
             if (std::get<0>(*it) == obstacleTaskNums[2]) {
                 it = filteredPriority.erase(it);
@@ -815,7 +989,7 @@ void dghc_controller::setObstaclePrirority(const std::vector<int> obstacleTaskNu
             }
         }
     }
-    if(f5.norm()==0){
+    if(f7.norm()==0){
         for (auto it = filteredPriority.begin(); it != filteredPriority.end();++it){
             if (std::get<0>(*it) == obstacleTaskNums[3]) {
                 it = filteredPriority.erase(it);
@@ -850,12 +1024,12 @@ void dghc_controller::priorityFilter(){
     const int mani = 1;
     const int pose = 0;
     const int mobile = 2;
-    const std::vector<int> jointLimitTaskNums = {4,5,6,7,8,9};
+    const std::vector<int> jointLimitTaskNums = {4,5,6,7,8,9,10};
 
-    // const std::vector<int> obstacle = {4,5,6,7}; // 0, 1, 3, 5 순서대로 
+    const std::vector<int> obstacle = {11,12,13,14}; // 0, 1, 4, 7 순서대로 
 
     setTrackingPriority(mani,mobile,pose);
-    // setObstaclePrirority(obstacle);
+    setObstaclePrirority(obstacle);
     setJointLimitPriority(jointLimitTaskNums);
     // std::cout << "prevFilteredPriority : ";
     // for(auto& task : prevFilteredPriority){
@@ -892,7 +1066,6 @@ void dghc_controller::priorityFilter(){
 }
 
 void dghc_controller::changeAlphas(std::vector<double>& currentValues,double t, double dt, double duration){
-
     // 변경 시작할 때를 기준으로, scale값들 설정
     if(alphaChangeDone){
         for(int i=0; i<desiredAlphas.size(); i++){
@@ -910,39 +1083,46 @@ void dghc_controller::changeAlphas(std::vector<double>& currentValues,double t, 
         }
         alphaChangeDone=false;
     }
-    if(t<=duration){
-        for(int i=0; i<desiredAlphas.size(); i++){
+    const double epsilon = 1.0e-06;
+
+
+    for(int i=0; i<desiredAlphas.size(); i++){
+        double currentValue_tmp;
         
-            //increase alpha 
-            if(desiredAlphas[i]>currentValues[i]){
-                
-                // currentValues[i] = prevDesiredAlphas[i] +(0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scale;
-                currentValues[i] += (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scaleValues[i];
+        //increase alpha 
+        if(desiredAlphas[i]>currentValues[i]){
+            
+            // currentValues[i] = prevDesiredAlphas[i] +(0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scale;
+            currentValue_tmp = currentValues[i] + (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scaleValues[i];
 
-                if(currentValues[i]>desiredAlphas[i]){
-                    currentValues[i] = desiredAlphas[i];
-                }
+            if((currentValue_tmp - desiredAlphas[i]) > epsilon || currentValue_tmp > 1){
+                currentValues[i] = desiredAlphas[i];
             }
-
-            //decrease alpha
-            else if(desiredAlphas[i]<currentValues[i]){
-
-                // currentValues[i] = prevDesiredAlphas[i] - (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scale;
-                currentValues[i] -= (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scaleValues[i];
-
-                if(currentValues[i]<desiredAlphas[i]){
-                    currentValues[i] = desiredAlphas[i];
-                }
+            else{
+                currentValues[i] = currentValue_tmp;
             }
-            else{}
         }
-    }
-    
 
-    const double epsilon = 0.001;
+        //decrease alpha
+        else if(desiredAlphas[i]<currentValues[i]){
+
+            // currentValues[i] = prevDesiredAlphas[i] - (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scale;
+            currentValue_tmp = currentValues[i] - (0.5*(M_PI/duration)*sin((M_PI/duration)*t))*dt*scaleValues[i];
+
+            if(desiredAlphas[i] - currentValue_tmp > epsilon || currentValue_tmp < 0){
+                currentValues[i] = desiredAlphas[i];
+            }
+            else{
+                currentValues[i] = currentValue_tmp;
+            }
+        }
+        else{}
+    }
+
+
     //모든 alpha값에 대한 변경이 완료됐는지 확인
     if(alphasSetDone(currentValues,desiredAlphas,epsilon)){
-        // printf("\n************** change is done !! **************\n");    
+        printf("\n************** change is done !! **************\n");    
         
         currentValues=desiredAlphas;
         transitionTime=0;
@@ -998,7 +1178,12 @@ void dghc_controller::getProjectedToq()
     +allProjections[6]*jjl4.transpose()*wrenchjl[3]
     +allProjections[7]*jjl5.transpose()*wrenchjl[4]
     +allProjections[8]*jjl6.transpose()*wrenchjl[5]
-    +allProjections[9]*jjl7.transpose()*wrenchjl[6]; 
+    +allProjections[9]*jjl7.transpose()*wrenchjl[6]
+    +allProjections[10]*jobs0.transpose()*wrenchObs0
+    +allProjections[11]*jobs1.transpose()*wrenchObs1
+    +allProjections[12]*jobs4.transpose()*wrenchObs4
+    +allProjections[13]*jobs7.transpose()*wrenchObs7
+    ; 
 
     // toqT =  allProjections[0]*jrimp.transpose()*wrenchImp;
     //         +allProjections[1]*jmimp.transpose()*wrenchmImp;
@@ -1065,108 +1250,29 @@ Eigen::Matrix<double, 7, 1> dghc_controller::saturateTorqueRate(const Eigen::Mat
     return tau_d_saturated;
 }
 
-void dghc_controller::test()
-{
-//     Eigen::VectorXd prioritiesVector;
-//     int numTasks = getNumTasks();
-//     prioritiesVector = Eigen::VectorXd::Zero(0.5*(numTasks*numTasks+numTasks)); 
-   
-//     prioritiesVector[0] = 0;
-//     prioritiesVector[1] = 0;
-//     prioritiesVector[2] = 0;
-        
-   
-        
-     
-//     int counter=0;
-//     for(unsigned int i=0; i<numTasks; i++){
-//       for(unsigned int j=i; j<numTasks; j++)
-//        {
-//          if(prioritiesVector(counter) < 0){
-//             std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector(counter) << " < 0" << std::endl;
-//             return;
-//            }
-//          if(prioritiesVector(counter) > 1){
-//             std::cerr << " a( " << i << "," << j << ") = " << prioritiesVector(counter) << " > 1" << std::endl;
-//             return;
-//            }
-//         setAlphaIJ(i,j,prioritiesVector(counter));
-//         counter++;
-//        } 
-//     }
-// assert(counter==prioritiesVector.size());
-
-}
-
-bool dghc_controller::pick_obj(){
-    // gripper_interface_->gripper_state_.is_grasped
-    // if((object_position-position7).norm()<0.01){
-    //     return gripper_interface_->close();
-    // }
-    // else {
-    //     return false;
-    // }
-}
-
-bool dghc_controller::place_obj(){
-    // if((object_position-position7).norm()<0.01){
-    //     return gripper_interface_->open();
-    // }
-    // else {
-    //     return false;
-    // }
-}
-
-// bool dghc_controller::gripper_button(){
-//     /**
-//      * TO BE IMPLEMENTED
-//     */
-// }
-
 void dghc_controller::set_fsm_args(){
-    // if(currentStep.data==1){
-    //     //picked args
-    //     if(pick_obj()){
-    //         picked.data = true;
-    //     }
-    //     else{
-    //         picked.data = false;
-    //     }
-    // }
+    if(currentStep.data == 3 || currentStep.data == 4){
+        
+        d[3][4] = (position7 - hand_position).norm(); // right hand to EE
+        std::cout << "d[3][4]: "<< d[3][4] << std::endl;
+        //set distance flag , d[3][4] : right hand to EE 
+        if(d[3][4] < DISTANCE_THRESHOLD){
+            distance_flag.data = true;
+        }
+        else{
+            distance_flag.data = false;
+        }
 
-    // //distance flag
-    // if(ee2hand_distance.norm() < DISTANCE_THRESHOLD){
-    //     distance_flag.data = true;
-    // }
-    // else{
-    //     distance_flag.data = false;
-    // }
-
-    //force flag
-    if(wrenchHand.norm() > FORCE_THRESHOLD){
-        force_flag.data = true;
+        //set force flag
+        Eigen::Vector3d FORCE  = wrenchHand.block(0,0,3,1);
+        Eigen::Vector3d TORQUE  = wrenchHand.block(0,3,3,1);
+        if(FORCE.norm() > FORCE_THRESHOLD || TORQUE.norm() > TORQUE_THRESHOLD){
+            force_flag.data = true;
+        }
+        else{
+            force_flag.data = false;
+        }
     }
-    else{
-        force_flag.data = false;
-    }
-
-    // //gripper button
-    // if(gripper_button()){
-    //     gripperButton.data = true;
-    // }
-    // else{
-    //     gripperButton.data = false;
-    // }
-
-    // if(currentStep.data == 5){
-    //     //placed
-    //     if(place_obj()){
-    //         placed.data = true;
-    //     }
-    //     else{
-    //         placed.data = false;
-    //     }
-    // }
 }
 
 
@@ -1179,7 +1285,7 @@ int dghc_controller::run(){
     // logger->set_buffer_mode(XBot::VariableBuffer::Mode::circular_buffer);
 
 
-   ros::Time current_time, last_time;
+    ros::Time current_time, last_time;
 
 
     ros::Rate loop_rate(1000);
@@ -1209,13 +1315,13 @@ int dghc_controller::run(){
 
         geometry_msgs::Wrench alphas_pub_data;
 
-        // alphas_pub_data.force.x = a00;
-        // alphas_pub_data.force.y = a11;
-        // alphas_pub_data.force.z = a22;
-        // alphas_pub_data.torque.x = a01;
-        // alphas_pub_data.torque.y = a02;
-        // alphas_pub_data.torque.z = a12;
-        // alpha_pub.publish(alphas_pub_data);
+        alphas_pub_data.force.x = a00;
+        alphas_pub_data.force.y = a11;
+        alphas_pub_data.force.z = a22;
+        alphas_pub_data.torque.x = a01;
+        alphas_pub_data.torque.y = a02;
+        alphas_pub_data.torque.z = a12;
+        alpha_pub.publish(alphas_pub_data);
 
          setInertia();
 
@@ -1239,7 +1345,7 @@ int dghc_controller::run(){
         //  std::cout <<"toq: "<<std::endl <<toqT.block(3,0,7,1) << std::endl;
         
      
-         toq = toqT.block(3,0,7,1); //+ arm_interface_->getCoriolisCompensation();
+        toq = toqT.block(3,0,7,1); //+ arm_interface_->getCoriolisCompensation();
          
     
            
@@ -1257,12 +1363,12 @@ int dghc_controller::run(){
 
         //   std::cout<<"toq: "<<toq.transpose()<<std::endl;      
         
-         arm_tau_J_d = arm_interface_->getDesiredJointCommands();
-         toq << saturateTorqueRate(toq, arm_tau_J_d);
+        arm_tau_J_d = arm_interface_->getDesiredJointCommands();
+        toq << saturateTorqueRate(toq, arm_tau_J_d);
         
-         checkDeadzone(vir_force(0), LINEAR);
-         checkDeadzone(vir_force(1), LINEAR);
-         checkDeadzone(vir_force(2), ANGULAR);
+        checkDeadzone(vir_force(0), LINEAR);
+        checkDeadzone(vir_force(1), LINEAR);
+        checkDeadzone(vir_force(2), ANGULAR);
 
          
         // std::cout<<"toq_saturated: "<<toq.transpose()<<std::endl;
@@ -1273,35 +1379,65 @@ int dghc_controller::run(){
         vir_torque.torque.z = vir_force(2);
         Vir_torque.publish(vir_torque);
 
-        // picked_pub.publish(picked);
-        // distance_flag_pub.publish(distance_flag);
-        // force_flag_pub.publish(force_flag);
-        // button_pub.publish(girpperButton);
-        // placed_pub.publish(placed);
+        distance_flag_pub.publish(distance_flag);
+        force_flag_pub.publish(force_flag);
 
 
-    // Limiting maximun torque values of the ARM
-    for (size_t i = 0; i < 4; ++i) {
-        if(toq(i) > 87 ){
-            toq(i) = 87;
+        // Limiting maximun torque values of the ARM
+        for (size_t i = 0; i < 4; ++i) {
+            if(toq(i) > 87 ){
+                toq(i) = 87;
+            }
+            else if(toq(i) < -87){
+                toq(i) = -87;
+            }
         }
-        else if(toq(i) < -87){
-            toq(i) = -87;
+        for (size_t i = 4; i < 7; ++i) {
+            if(toq(i) > 8){
+                toq(i) = 8;
+            }
+            else if(toq(i) < -8){
+                toq(i) = -8;
+            }
         }
-    }
-    for (size_t i = 4; i < 7; ++i) {
-        if(toq(i) > 8){
-            toq(i) = 8;
+        //std::cout<<"toq_limited: "<<toq.transpose()<<std::endl;
+        // Set joint commands and publish virtual forces
+        
+        arm_interface_->setJointCommands(toq);
+        q_past = q; 
+
+
+        // for human factor
+        geometry_msgs::PoseArray modelsPosemsg;
+        geometry_msgs::PoseArray modelsVelmsg;
+
+        // Create a vector of Vector3d to store positions
+        std::vector<Eigen::Vector3d> positions = {
+        mobile_pose + R_m*m_distance, position1, position2, position3,
+        position4, position5, position6, position7
+        };
+        std::vector<Eigen::VectorXd> twists = {
+        mobile_twist, twist1, twist2, twist3,
+        twist4, twist5, twist6, twist7
+        };
+
+        // Resize the poses field to have the right size
+        modelsPosemsg.poses.resize(positions.size());
+        modelsVelmsg.poses.resize(positions.size());
+
+        // Iterate through positions and fill modelsPosemsg.poses
+        for (size_t i = 0; i < positions.size(); ++i) {
+            modelsPosemsg.poses[i].position.x = positions[i](0);
+            modelsPosemsg.poses[i].position.y = positions[i](1);
+            modelsPosemsg.poses[i].position.z = positions[i](2);
+            modelsVelmsg.poses[i].position.x = twists[i](0);
+            modelsVelmsg.poses[i].position.y = twists[i](1);
+            modelsVelmsg.poses[i].position.z = twists[i](2);
         }
-        else if(toq(i) < -8){
-            toq(i) = -8;
-        }
-    }
-    //std::cout<<"toq_limited: "<<toq.transpose()<<std::endl;
-    // Set joint commands and publish virtual forces
-    
-     arm_interface_->setJointCommands(toq);
-     q_past = q; 
+
+        modelPosepublisher.publish(modelsPosemsg);
+        modelVelpublisher.publish(modelsVelmsg);
+
         
         ros::spinOnce();
         loop_rate.sleep();

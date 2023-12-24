@@ -23,13 +23,15 @@ dghc_controller::dghc_controller(){
     transitionTime =0;
     previousTime=ros::Time::now();
     modeInput = false;
-    priorityInput.emplace_back(std::make_tuple(3,0,0));
+
     priorityInput.emplace_back(std::make_tuple(4,0,0));
     priorityInput.emplace_back(std::make_tuple(5,0,0));
     priorityInput.emplace_back(std::make_tuple(6,0,0));
     priorityInput.emplace_back(std::make_tuple(7,0,0));
     priorityInput.emplace_back(std::make_tuple(8,0,0));
     priorityInput.emplace_back(std::make_tuple(9,0,0));
+    priorityInput.emplace_back(std::make_tuple(10,0,0));
+    
     priorityInput.emplace_back(std::make_tuple(2,0,0));
     priorityInput.emplace_back(std::make_tuple(0,0,0));
     
